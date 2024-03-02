@@ -26,9 +26,8 @@ class InflatedHumanScanNode : public rclcpp::Node
                                                             
         {
             std::string scan_topic;
+            inflation_r = this->declare_parameter<double>("inflation_radius", 1.0);
             // get the inflation radius parameter
-            this->declare_parameter("inflation_radius");
-            this->get_parameter_or("inflation_radius", inflation_r, 1.0);
             RCLCPP_INFO(this->get_logger(), "%f", inflation_r);
 
             

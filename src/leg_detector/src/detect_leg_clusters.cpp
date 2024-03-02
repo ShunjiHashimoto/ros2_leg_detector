@@ -71,27 +71,15 @@ public:
         num_prev_markers_published_ = 0;
         scan_num_ = 0;
 
-        this->declare_parameter("scan_topic");
-        this->declare_parameter("fixed_frame");
-        this->declare_parameter("forest_file");
-        this->declare_parameter("detection_threshold");
-        this->declare_parameter("cluster_dist_euclid");
-        this->declare_parameter("min_points_per_cluster");
-        this->declare_parameter("max_detect_distance");
-        this->declare_parameter("marker_display_lifetime");
-        this->declare_parameter("use_scan_header_stamp_for_tfs");
-        this->declare_parameter("max_detected_clusters");
-
-        this->get_parameter_or("scan_topic", scan_topic, std::string("/scan"));
-        this->get_parameter_or("fixed_frame", fixed_frame_, std::string("laser"));
-        this->get_parameter_or("forest_file", forest_file, std::string("./src/leg_detector/config/trained_leg_detector_res=0.33.yaml"));
-        this->get_parameter_or("detection_threshold", detection_threshold_, -1.0);
-        this->get_parameter_or("cluster_dist_euclid", cluster_dist_euclid_, 0.13);
-        this->get_parameter_or("min_points_per_cluster", min_points_per_cluster_, 3);
-        this->get_parameter_or("max_detect_distance", max_detect_distance_, 10.0);
-        this->get_parameter_or("marker_display_lifetime", marker_display_lifetime_, 0.2);
-        this->get_parameter_or("use_scan_header_stamp_for_tfs", use_scan_header_stamp_for_tfs_, false);
-        this->get_parameter_or("max_detected_clusters", max_detected_clusters_, -1);
+        scan_topic = this->declare_parameter<std::string>("scan_topic", "/scan"); 
+        fixed_frame_ = this->declare_parameter<std::string>("fixed_frame", "laser");
+        detection_threshold_ = this->declare_parameter<double>("detection_threshold", -1.0);
+        cluster_dist_euclid_ = this->declare_parameter<double>("cluster_dist_euclid", 0.13);
+        min_points_per_cluster_ = this->declare_parameter<int>("min_points_per_cluster", 3);
+        max_detect_distance_ = this->declare_parameter<double>("max_detect_distance", 10.0);
+        max_detected_clusters_ = this->declare_parameter<int>("max_detected_clusters", -1);
+        use_scan_header_stamp_for_tfs_ = this->declare_parameter<bool>("use_scan_header_stamp_for_tfs", false);
+        forest_file = this->declare_parameter<std::string>("forest_file", "/root/ros2_ws/src/leg_tracker_ros2/config/trained_leg_detector_res=0.33.yaml");
 
         //Print the ROS parameters
         RCLCPP_INFO(this->get_logger(), "forest_file: %s", forest_file.c_str());
@@ -123,7 +111,7 @@ public:
         detected_leg_clusters_pub_ = this->create_publisher<leg_detector_msgs::msg::LegArray>("detected_leg_clusters", 20);
         this->scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(scan_topic, default_qos, std::bind(&DetectLegClusters::laserCallback, this, std::placeholders::_1));
 
-        buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+        buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
         tfl_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
         auto timer_interface = std::make_shared<tf2_ros::CreateTimerROS>(
                                                             this->get_node_base_interface(),
@@ -177,7 +165,8 @@ private:
         processor.removeLessThan(min_points_per_cluster_);
         
         // OpenCV matrix needed to use the OpenCV random forest classifier
-        CvMat* tmp_mat = cvCreateMat(1, feat_count_, CV_32FC1);
+        // CvMat* tmp_mat = cvCreateMat(1, feat_count_, CV_32FC1);
+        cv::Mat tmp_mat(1, feat_count_, CV_32FC1);
 
         leg_detector_msgs::msg::LegArray detected_leg_clusters;
         detected_leg_clusters.header.frame_id = scan->header.frame_id;
@@ -194,7 +183,7 @@ private:
             tf_time1 = scan->header.stamp;
 
             try {
-                buffer_->lookupTransform(fixed_frame_, scan->header.frame_id, tf_time1, rclcpp::Duration(1.0));
+                buffer_->lookupTransform(fixed_frame_, scan->header.frame_id, tf_time1, rclcpp::Duration(1, 0));
                 transform_available = buffer_->canTransform(fixed_frame_, scan->header.frame_id, tf_time1);              
             } catch(tf2::TransformException &e) {
                 RCLCPP_INFO (this->get_logger(), "Stopped here : Detect_leg_clusters: No tf available");
@@ -233,21 +222,15 @@ private:
 
                     // Classify cluster using random forest classifier
                     std::vector<float> f = cf_.calcClusterFeatures(*cluster, *scan);
-                    for (int k = 0; k < feat_count_; k++)
-                        tmp_mat->data.fl[k] = (float)(f[k]);
-                    
-                    #if (CV_VERSION_MAJOR <= 3 || CV_VERSION_MINOR <= 2)
-                        // Output of forest->predict is [-1.0, 1.0] so we scale to reach [0.0, 1.0]
-                        float probability_of_leg = 0.5 * (1.0 + forest->predict(cv::cvarrToMat(tmp_mat)));
-                    #else
-                        // The forest->predict funciton has been removed in the latest versions of OpenCV so we'll do the calculation explicitly.
-                        RCLCPP_INFO (this->get_logger(), "Checkout 6");
-                        cv::Mat result;
-                        forest->getVotes(cv::cvarrToMat(tmp_mat), result, 0);
-                        int positive_votes = result.at<int>(1, 1);
-                        int negative_votes = result.at<int>(1, 0);
-                        float probability_of_leg = positive_votes / static_cast<double>(positive_votes + negative_votes);
-                    #endif
+                    cv::Mat tmp_mat = cv::Mat(1, feat_count_, CV_32F, f.data()); // 特徴量ベクトルをcv::Matに変換 
+
+                    // The forest->predict funciton has been removed in the latest versions of OpenCV so we'll do the calculation explicitly.
+                    cv::Mat result;
+                    forest->getVotes(tmp_mat, result, 0); // Direct use of cv::Mat
+                    int positive_votes = result.at<int>(1, 1);
+                    int negative_votes = result.at<int>(1, 0);
+                    float probability_of_leg = positive_votes / static_cast<double>(positive_votes + negative_votes);
+                    // RCLCPP_INFO (this->get_logger(), "Checkout 6");
 
                     // Consider only clusters that have a confidence greater than detection_threshold_
                     if (probability_of_leg > detection_threshold_)
@@ -271,9 +254,11 @@ private:
                             new_leg.confidence = probability_of_leg;
                             leg_set.insert(new_leg);
                         }
-
+                    // else 
+                    // {
+                    //     RCLCPP_INFO(this->get_logger(), "skipped cluster");
+                    // }
                     }
-                    
                 }
             }
         }
@@ -328,8 +313,9 @@ private:
 
         }
         num_prev_markers_published_ = id_num; // For the next callback
+        RCLCPP_INFO(this->get_logger(), "clusters size: %d", detected_leg_clusters.legs.size());
         detected_leg_clusters_pub_->publish(detected_leg_clusters);
-        cvReleaseMat(&tmp_mat);
+        // cvReleaseMat(&tmp_mat);
     }
 
     /**
@@ -338,8 +324,7 @@ private:
     class CompareLegs
     {
     public:
-        bool operator()(const leg_detector_msgs::msg::Leg &a, const leg_detector_msgs::msg::Leg &b)
-        {
+        bool operator()(const leg_detector_msgs::msg::Leg &a, const leg_detector_msgs::msg::Leg &b) const {
 
             float rel_dist_a = pow(a.position.x * a.position.x + a.position.y * a.position.y, 1. / 2.);
             float rel_dist_b = pow(b.position.x * b.position.x + b.position.y * b.position.y, 1. / 2.);

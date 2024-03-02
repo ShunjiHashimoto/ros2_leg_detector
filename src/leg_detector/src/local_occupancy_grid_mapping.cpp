@@ -4,6 +4,7 @@
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/create_timer_ros.h>
+#include <tf2_ros/buffer.h>
 #include <tf2/utils.h>
 
 // Include ROS messages
@@ -56,36 +57,22 @@ class OccupancyGridMapping :public rclcpp::Node
             std::string local_map_topic;
             std::string scan_topic;
             grid_centre_pos_found_ = false;
-            
-            this->declare_parameter("scan_topic");
-            this->declare_parameter("fixed_frame");
-            this->declare_parameter("base_frame");
-            this->declare_parameter("local_map_topic");
-            this->declare_parameter("local_map_resolution");
-            this->declare_parameter("local_map_cells_per_side");
-            this->declare_parameter("invalid_measurements_are_free_space");
-            this->declare_parameter("unseen_is_free_space");
-            this->declare_parameter("use_scan_header_stamp_for_tfs");
-            this->declare_parameter("shift_threshold");
-            this->declare_parameter("reliable_inf_range");
-            this->declare_parameter("cluster_dist_euclid");
-            this->declare_parameter("min_points_per_cluster");
-            
-            this->get_parameter_or("scan_topic", scan_topic, std::string("/scan"));
-            this->get_parameter_or("fixed_frame", fixed_frame_, std::string("laser"));
-            this->get_parameter_or("base_frame", base_frame_, std::string("base_link"));
-            this->get_parameter_or("local_map_topic", local_map_topic, std::string("local_map"));
-            this->get_parameter_or("local_map_resolution", resolution_, 0.05);
-            this->get_parameter_or("local_map_cells_per_side", width_, 400);
-            this->get_parameter_or("invalid_measurements_are_free_space", invalid_measurements_are_free_space_, false);
-            this->get_parameter_or("unseen_is_freespace", unseen_is_freespace_, true);
-            this->get_parameter_or("use_scan_header_stamp_for_tfs", use_scan_header_stamp_for_tfs_, false);
 
-            this->get_parameter_or("shift_threshold", shift_threshold_, 1.0);
-            this->get_parameter_or("reliable_inf_range", reliable_inf_range_, 5.0);
-            this->get_parameter_or("cluster_dist_euclid", cluster_dist_euclid_, 0.13);
-            this->get_parameter_or("min_points_per_cluster", min_points_per_cluster_, 3);
 
+            scan_topic = this->declare_parameter<std::string>("scan_topic", "/scan");
+            fixed_frame_ = this->declare_parameter<std::string>("fixed_frame", "base_link");
+            base_frame_ = this->declare_parameter<std::string>("base_frame", "base_link");
+            local_map_topic = this->declare_parameter<std::string>("local_map_topic", "local_map");
+            resolution_ = this->declare_parameter<double>("local_map_resolution", 0.05);
+            invalid_measurements_are_free_space_ = this->declare_parameter<bool>("invalid_measurements_are_free_space", false);
+            reliable_inf_range_ = this->declare_parameter<double>("reliable_inf_range", 5.0);
+            unseen_is_freespace_ = this->declare_parameter<bool>("unseen_is_freespace", true);
+            use_scan_header_stamp_for_tfs_ = this->declare_parameter<bool>("use_scan_header_stamp_for_tfs", false);
+            shift_threshold_ = this->declare_parameter<double>("shift_threshold", 1.0);
+            width_ = this->declare_parameter<int>("local_map_cells_per_side", 400);
+            cluster_dist_euclid_ = this->declare_parameter<double>("cluster_dist_euclid",  0.13);
+            min_points_per_cluster_ = this->declare_parameter<int>("min_points_per_cluster",  3);
+            
             // Initialize map
             // All probabilities are held in log-space
             l0_ = logit(UNKNOWN);
@@ -162,7 +149,6 @@ class OccupancyGridMapping :public rclcpp::Node
         std::shared_ptr<tf2_ros::TransformListener> tfl_;
         std::shared_ptr<tf2_ros::Buffer> buffer_;
 
-
         /**
          * @brief Coordinated callback for both laser scan message and a non_leg_clusters message
          * 
@@ -181,8 +167,8 @@ class OccupancyGridMapping :public rclcpp::Node
 
                 try
                 {
-                    buffer_->canTransform(fixed_frame_, scan_msg->header.frame_id, tf_time, rclcpp::Duration(1.0));
-                    transform_available = buffer_->canTransform(fixed_frame_, scan_msg->header.frame_id, tf_time, rclcpp::Duration(1.0));
+                    buffer_->canTransform(fixed_frame_, scan_msg->header.frame_id, tf_time, rclcpp::Duration(1, 0));
+                    transform_available = buffer_->canTransform(fixed_frame_, scan_msg->header.frame_id, tf_time, rclcpp::Duration(1, 0));
                 } catch(tf2::TransformException &ex) {
                     RCLCPP_INFO(this->get_logger(), "Local Map : No tf available");
                     transform_available = false;
